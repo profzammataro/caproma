@@ -404,16 +404,14 @@ function clampCam() {
 
 // ── Zoom verso un punto schermo ─────────────────────────────
 function zoomAt(screenX, screenY, factor) {
-  const newScale = Math.max(0.5, Math.min(8, camScale * factor));
+  const newScale = Math.max(fitScaleRef, Math.min(8, camScale * factor));
   const sf = newScale / camScale;
   camX = screenX - (screenX - camX) * sf;
   camY = screenY - (screenY - camY) * sf;
   camScale = newScale;
   clampCam();
   redraw();
-  document.getElementById('resetBtn').classList.toggle(
-    'on', camScale > fitScaleRef * 1.05 || true
-  );
+  document.getElementById('resetBtn').classList.toggle('on', camScale > fitScaleRef * 1.05);
 }
 
 let fitScaleRef = 1;
@@ -607,8 +605,8 @@ function selectCap(d) {
 }
 
 function zoomToCAP(d) {
-  // Porta il CAP al centro dello schermo con zoom 2.5x
-  const targetScale = Math.min(8, Math.max(fitScaleRef * 2.5, 2));
+  // Zoom moderato: 1.8x rispetto alla vista intera, max 4x
+  const targetScale = Math.min(4, fitScaleRef * 1.8);
   camScale = targetScale;
   const capScreenX = (d.x / 100) * IMG_W * camScale;
   const capScreenY = (d.y / 100) * IMG_H * camScale;
