@@ -607,8 +607,8 @@ function selectCap(d) {
 }
 
 function zoomToCAP(d) {
-  // Porta il CAP al centro dello schermo con zoom 3.5x
-  const targetScale = Math.min(8, Math.max(fitScaleRef * 3.5, 2));
+  // Porta il CAP al centro dello schermo con zoom 2.5x
+  const targetScale = Math.min(8, Math.max(fitScaleRef * 2.5, 2));
   camScale = targetScale;
   const capScreenX = (d.x / 100) * IMG_W * camScale;
   const capScreenY = (d.y / 100) * IMG_H * camScale;
