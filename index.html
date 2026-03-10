@@ -159,22 +159,11 @@
   }
   .map-container.dragging { cursor: grabbing; }
 
-  #mapImg {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    object-fit: contain;
-    object-position: center;
-    user-select: none;
-    -webkit-user-drag: none;
-    transform-origin: 0 0;
-  }
-
   #mapCanvas {
     position: absolute;
     top: 0; left: 0;
-    pointer-events: none;
     width: 100%; height: 100%;
+    display: block;
   }
 
   /* Zoom controls */
@@ -260,10 +249,6 @@
 </header>
 
 <div class="map-container" id="mapContainer">
-  <img id="mapImg"
-    src="mappa_cap_roma.jpg"
-    alt="Mappa CAP Roma"
-    draggable="false">
   <canvas id="mapCanvas"></canvas>
 
   <div class="zoom-ctrl">
@@ -367,259 +352,239 @@ const CAPS = [
 ];
 
 // ─────────────────────────────────────────────
-// IMAGE + CANVAS SETUP
+// CANVAS-ONLY ENGINE
+// Mappa + highlight disegnati sullo stesso canvas.
+// Pan libero senza limiti artificiali.
 // ─────────────────────────────────────────────
 const container = document.getElementById('mapContainer');
-const img       = document.getElementById('mapImg');
 const canvas    = document.getElementById('mapCanvas');
 const ctx       = canvas.getContext('2d');
 
-const IMG_W = 8268, IMG_H = 5907; // native image size
+const IMG_W = 8268, IMG_H = 5907;
 
-let scale = 1, offsetX = 0, offsetY = 0;
-let isDragging = false, dragStartX, dragStartY, dragOffX, dragOffY;
+// Viewport transform: tutto il rendering usa queste
+let camX = 0, camY = 0, camScale = 1;
+
+let isDragging = false, dragStartX, dragStartY, dragCamX, dragCamY;
 let highlighted = null;
 let animFrame = null;
 let pulseT = 0;
 
-function getImgRect() {
-  // object-fit: contain inside container
-  const cw = container.clientWidth, ch = container.clientHeight;
-  const ratio = Math.min(cw / IMG_W, ch / IMG_H);
-  const iw = IMG_W * ratio, ih = IMG_H * ratio;
-  const ix = (cw - iw) / 2, iy = (ch - ih) / 2;
-  return { ix, iy, iw, ih, ratio };
-}
+// Carica immagine una volta sola
+const mapImage = new Image();
+mapImage.src = 'mappa_cap_roma.jpg';
+mapImage.onload = () => { fitMap(); redraw(); };
 
-function resizeCanvas() {
-  canvas.width  = container.clientWidth;
-  canvas.height = container.clientHeight;
-  drawHighlight();
-}
-
-function pctToCanvas(xPct, yPct) {
-  const { ix, iy, iw, ih } = getImgRect();
+// ── Helpers coordinate ──────────────────────────────────────
+// Converti percentuale immagine → pixel canvas
+function imgPctToScreen(xPct, yPct) {
   return {
-    x: ix + (xPct / 100) * iw * scale + offsetX,
-    y: iy + (yPct / 100) * ih * scale + offsetY
+    x: camX + (xPct / 100) * IMG_W * camScale,
+    y: camY + (yPct / 100) * IMG_H * camScale
   };
 }
 
-function drawHighlight() {
+// ── Fit iniziale (contain) ──────────────────────────────────
+function fitMap() {
+  const cw = canvas.width, ch = canvas.height;
+  camScale = Math.min(cw / IMG_W, ch / IMG_H);
+  camX = (cw - IMG_W * camScale) / 2;
+  camY = (ch - IMG_H * camScale) / 2;
+}
+
+// ── Clamp pan: non uscire troppo dall'immagine ──────────────
+function clampCam() {
+  const iw = IMG_W * camScale, ih = IMG_H * camScale;
+  const cw = canvas.width,     ch = canvas.height;
+  // Margine: permettiamo di trascinare finché almeno 80px di mappa restano visibili
+  const margin = 80;
+  camX = Math.min(cw - margin, Math.max(margin - iw, camX));
+  camY = Math.min(ch - margin, Math.max(margin - ih, camY));
+}
+
+// ── Zoom verso un punto schermo ─────────────────────────────
+function zoomAt(screenX, screenY, factor) {
+  const newScale = Math.max(0.5, Math.min(8, camScale * factor));
+  const sf = newScale / camScale;
+  camX = screenX - (screenX - camX) * sf;
+  camY = screenY - (screenY - camY) * sf;
+  camScale = newScale;
+  clampCam();
+  redraw();
+  document.getElementById('resetBtn').classList.toggle(
+    'on', camScale > fitScaleRef * 1.05 || true
+  );
+}
+
+let fitScaleRef = 1;
+
+// ── Disegna tutto ───────────────────────────────────────────
+function redraw() {
+  canvas.width  = container.clientWidth;
+  canvas.height = container.clientHeight;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 1. Mappa
+  if (mapImage.complete && mapImage.naturalWidth) {
+    ctx.drawImage(mapImage, camX, camY, IMG_W * camScale, IMG_H * camScale);
+  }
+
+  // 2. Highlight
   if (!highlighted) return;
+  const { x: cx, y: cy } = imgPctToScreen(highlighted.x, highlighted.y);
 
-  const { ix, iy, iw, ih } = getImgRect();
-  const cx = ix + (highlighted.x / 100) * iw * scale + offsetX;
-  const cy = iy + (highlighted.y / 100) * ih * scale + offsetY;
+  const baseR = Math.max(14, 22 * camScale);
+  const pulse = Math.sin(pulseT * 0.06) * 0.28 + 0.72;
 
-  const baseR = Math.max(28, 36 * scale);
-  const pulse = Math.sin(pulseT * 0.06) * 0.3 + 0.7;
-
-  // Outer glow rings
+  // Glow rings
   for (let i = 3; i >= 1; i--) {
     ctx.beginPath();
-    ctx.arc(cx, cy, baseR * (1 + i * 0.45) * pulse, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(200,144,42,${0.15 / i})`;
+    ctx.arc(cx, cy, baseR * (1 + i * 0.5) * pulse, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(200,144,42,${0.18 / i})`;
     ctx.lineWidth = 2;
     ctx.stroke();
   }
 
-  // Filled circle
+  // Cerchio pieno
   ctx.beginPath();
   ctx.arc(cx, cy, baseR, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(200,144,42,0.28)';
+  ctx.fillStyle = 'rgba(200,144,42,0.3)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(232,184,75,0.9)';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(232,184,75,0.95)';
+  ctx.lineWidth = 2.5;
   ctx.stroke();
 
-  // Cross-hair lines
-  const arm = baseR * 1.8;
-  ctx.strokeStyle = 'rgba(232,184,75,0.5)';
+  // Mirino
+  const arm = baseR * 1.9;
+  ctx.strokeStyle = 'rgba(232,184,75,0.55)';
   ctx.lineWidth = 1.5;
   ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(cx - arm, cy); ctx.lineTo(cx - baseR - 4, cy); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx + arm, cy); ctx.lineTo(cx + baseR + 4, cy); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, cy - arm); ctx.lineTo(cx, cy - baseR - 4); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, cy + arm); ctx.lineTo(cx, cy + baseR + 4); ctx.stroke();
+  [[cx-arm, cy, cx-baseR-2, cy],[cx+baseR+2, cy, cx+arm, cy],
+   [cx, cy-arm, cx, cy-baseR-2],[cx, cy+baseR+2, cx, cy+arm]].forEach(([x1,y1,x2,y2]) => {
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  });
   ctx.setLineDash([]);
 
-  // Label bubble
+  // Bubble label
   const lbl = highlighted.cap;
-  ctx.font = `bold ${Math.max(13, 15 * scale)}px 'IBM Plex Mono', monospace`;
+  const fs = Math.max(11, 13 * camScale);
+  ctx.font = `bold ${fs}px 'IBM Plex Mono', monospace`;
   const tw = ctx.measureText(lbl).width;
-  const pad = 8, th = Math.max(13, 15 * scale) + 4;
-  const bx = cx - tw / 2 - pad;
-  const by = cy - baseR - th - pad * 2 - 6;
+  const pad = 7, bh = fs + 6;
+  const bx = cx - tw/2 - pad;
+  const by = cy - baseR - bh - pad*2 - 8;
+  const bw = tw + pad*2;
+  const mx = cx;
 
-  // bubble bg
   ctx.beginPath();
-  const br = 6;
-  ctx.moveTo(bx + br, by);
-  ctx.lineTo(bx + tw + pad * 2 - br, by);
-  ctx.quadraticCurveTo(bx + tw + pad * 2, by, bx + tw + pad * 2, by + br);
-  ctx.lineTo(bx + tw + pad * 2, by + th + pad);
-  ctx.quadraticCurveTo(bx + tw + pad * 2, by + th + pad + br, bx + tw + pad * 2 - br, by + th + pad + br);
-  // arrow
-  const mx = bx + tw / 2 + pad;
-  ctx.lineTo(mx + 6, by + th + pad + br);
-  ctx.lineTo(mx, cy - baseR - 2);
-  ctx.lineTo(mx - 6, by + th + pad + br);
-  ctx.lineTo(bx + br, by + th + pad + br);
-  ctx.quadraticCurveTo(bx, by + th + pad + br, bx, by + th + pad);
-  ctx.lineTo(bx, by + br);
-  ctx.quadraticCurveTo(bx, by, bx + br, by);
+  ctx.moveTo(bx+6, by);
+  ctx.lineTo(bx+bw-6, by);
+  ctx.quadraticCurveTo(bx+bw, by, bx+bw, by+6);
+  ctx.lineTo(bx+bw, by+bh+pad);
+  ctx.quadraticCurveTo(bx+bw, by+bh+pad+6, bx+bw-6, by+bh+pad+6);
+  ctx.lineTo(mx+6, by+bh+pad+6);
+  ctx.lineTo(mx, cy-baseR-2);
+  ctx.lineTo(mx-6, by+bh+pad+6);
+  ctx.lineTo(bx+6, by+bh+pad+6);
+  ctx.quadraticCurveTo(bx, by+bh+pad+6, bx, by+bh+pad);
+  ctx.lineTo(bx, by+6);
+  ctx.quadraticCurveTo(bx, by, bx+6, by);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(10,30,60,0.92)';
+  ctx.fillStyle = 'rgba(8,22,50,0.93)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(200,144,42,0.8)';
+  ctx.strokeStyle = 'rgba(200,144,42,0.85)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
   ctx.fillStyle = '#E8B84B';
-  ctx.fillText(lbl, cx - tw / 2, by + th + 2);
+  ctx.font = `bold ${fs}px 'IBM Plex Mono', monospace`;
+  ctx.fillText(lbl, cx - tw/2, by + bh + 1);
 }
 
 function animate() {
   pulseT++;
-  drawHighlight();
+  redraw();
   animFrame = requestAnimationFrame(animate);
 }
+function startAnimate() { if (animFrame) cancelAnimationFrame(animFrame); animate(); }
+function stopAnimate()  { if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; } }
 
-function startAnimate() {
-  if (animFrame) cancelAnimationFrame(animFrame);
-  animate();
-}
-function stopAnimate() {
-  if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
-}
-
-// ─────────────────────────────────────────────
-// ZOOM & PAN
-// ─────────────────────────────────────────────
-function clampOffset() {
-  const { ix, iy, iw, ih } = getImgRect();
-  // Allow pan only within reasonable bounds
-  const maxX = iw * (scale - 1) / 2 + iw * 0.1;
-  const maxY = ih * (scale - 1) / 2 + ih * 0.1;
-  offsetX = Math.max(-maxX, Math.min(maxX, offsetX));
-  offsetY = Math.max(-maxY, Math.min(maxY, offsetY));
-}
-
-function applyZoom(delta, cx, cy) {
-  const oldScale = scale;
-  scale = Math.max(1, Math.min(6, scale * (1 + delta)));
-  // zoom toward point
-  const { ix, iy, iw, ih } = getImgRect();
-  const ratio = scale / oldScale;
-  offsetX = cx - (cx - offsetX) * ratio;
-  offsetY = cy - (cy - offsetY) * ratio;
-  // Re-get rect after scale change for clamping
-  clampOffset();
-  applyTransform();
-}
-
-function applyTransform() {
-  const { ix, iy } = getImgRect();
-  img.style.transformOrigin = '0 0';
-  img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
-  drawHighlight();
-  document.getElementById('resetBtn').classList.toggle('on', scale > 1.05 || Math.abs(offsetX) > 5 || Math.abs(offsetY) > 5);
-}
-
-// Mouse wheel zoom
+// ── Zoom & Pan ──────────────────────────────────────────────
 container.addEventListener('wheel', e => {
   e.preventDefault();
   const rect = container.getBoundingClientRect();
-  applyZoom(-e.deltaY * 0.001, e.clientX - rect.left, e.clientY - rect.top);
+  const factor = e.deltaY < 0 ? 1.12 : 1/1.12;
+  zoomAt(e.clientX - rect.left, e.clientY - rect.top, factor);
 }, { passive: false });
 
-// Mouse drag
 container.addEventListener('mousedown', e => {
-  if (scale <= 1) return;
   isDragging = true;
   dragStartX = e.clientX; dragStartY = e.clientY;
-  dragOffX = offsetX; dragOffY = offsetY;
+  dragCamX = camX; dragCamY = camY;
   container.classList.add('dragging');
 });
 window.addEventListener('mousemove', e => {
   if (!isDragging) return;
-  offsetX = dragOffX + (e.clientX - dragStartX);
-  offsetY = dragOffY + (e.clientY - dragStartY);
-  clampOffset();
-  applyTransform();
+  camX = dragCamX + (e.clientX - dragStartX);
+  camY = dragCamY + (e.clientY - dragStartY);
+  clampCam();
+  redraw();
 });
 window.addEventListener('mouseup', () => {
   isDragging = false;
   container.classList.remove('dragging');
 });
 
-// Touch pinch/pan
+// Touch
 let lastTouches = null;
-container.addEventListener('touchstart', e => {
-  lastTouches = e.touches;
-}, { passive: true });
-
+container.addEventListener('touchstart', e => { lastTouches = e.touches; }, { passive: true });
 container.addEventListener('touchmove', e => {
   e.preventDefault();
   const rect = container.getBoundingClientRect();
   if (e.touches.length === 2 && lastTouches?.length === 2) {
-    const d0 = Math.hypot(lastTouches[0].clientX - lastTouches[1].clientX,
-                          lastTouches[0].clientY - lastTouches[1].clientY);
-    const d1 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
-                          e.touches[0].clientY - e.touches[1].clientY);
-    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
-    const my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
-    applyZoom((d1 - d0) / d0 * 0.5, mx, my);
-  } else if (e.touches.length === 1 && lastTouches?.length === 1 && scale > 1) {
-    offsetX += e.touches[0].clientX - lastTouches[0].clientX;
-    offsetY += e.touches[0].clientY - lastTouches[0].clientY;
-    clampOffset();
-    applyTransform();
+    const d0 = Math.hypot(lastTouches[0].clientX-lastTouches[1].clientX, lastTouches[0].clientY-lastTouches[1].clientY);
+    const d1 = Math.hypot(e.touches[0].clientX-e.touches[1].clientX,     e.touches[0].clientY-e.touches[1].clientY);
+    const mx = (e.touches[0].clientX+e.touches[1].clientX)/2 - rect.left;
+    const my = (e.touches[0].clientY+e.touches[1].clientY)/2 - rect.top;
+    if (d0 > 0) zoomAt(mx, my, d1/d0);
+  } else if (e.touches.length === 1 && lastTouches?.length === 1) {
+    camX += e.touches[0].clientX - lastTouches[0].clientX;
+    camY += e.touches[0].clientY - lastTouches[0].clientY;
+    clampCam();
+    redraw();
   }
   lastTouches = e.touches;
 }, { passive: false });
 
-// Zoom buttons
-document.getElementById('zoomIn').addEventListener('click', () => {
-  applyZoom(0.3, container.clientWidth/2, container.clientHeight/2);
-});
-document.getElementById('zoomOut').addEventListener('click', () => {
-  applyZoom(-0.3, container.clientWidth/2, container.clientHeight/2);
-});
+document.getElementById('zoomIn').addEventListener('click', () =>
+  zoomAt(canvas.width/2, canvas.height/2, 1.35));
+document.getElementById('zoomOut').addEventListener('click', () =>
+  zoomAt(canvas.width/2, canvas.height/2, 1/1.35));
 
-// Reset
 document.getElementById('resetBtn').addEventListener('click', () => {
-  scale = 1; offsetX = 0; offsetY = 0;
-  applyTransform();
+  fitMap(); redraw();
+  document.getElementById('resetBtn').classList.remove('on');
 });
 
-// ─────────────────────────────────────────────
-// SEARCH
-// ─────────────────────────────────────────────
-const searchInput  = document.getElementById('searchInput');
-const clearBtn     = document.getElementById('clearBtn');
-const sugBox       = document.getElementById('suggestions');
-const infoPill     = document.getElementById('infoPill');
-const pillCap      = document.getElementById('pillCap');
-const pillZone     = document.getElementById('pillZone');
-
+// ── Search ──────────────────────────────────────────────────
+const searchInput = document.getElementById('searchInput');
+const clearBtn    = document.getElementById('clearBtn');
+const sugBox      = document.getElementById('suggestions');
+const infoPill    = document.getElementById('infoPill');
+const pillCap     = document.getElementById('pillCap');
+const pillZone    = document.getElementById('pillZone');
 let sugActive = -1;
 
 function getSuggestions(q) {
   if (!q || q.length < 2) return [];
   q = q.toLowerCase();
-  return CAPS.filter(d =>
-    d.cap.startsWith(q) || d.zone.toLowerCase().includes(q)
-  ).slice(0, 8);
+  return CAPS.filter(d => d.cap.startsWith(q) || d.zone.toLowerCase().includes(q)).slice(0, 8);
 }
 
 function renderSuggestions(list) {
-  sugBox.innerHTML = '';
-  sugActive = -1;
+  sugBox.innerHTML = ''; sugActive = -1;
   if (!list.length) { sugBox.classList.remove('on'); return; }
-  list.forEach((d, i) => {
+  list.forEach(d => {
     const el = document.createElement('div');
     el.className = 'sug-item';
     el.innerHTML = `<span class="sug-cap">${d.cap}</span><span class="sug-zone">${d.zone}</span>`;
@@ -634,60 +599,48 @@ function selectCap(d) {
   searchInput.value = d.cap + ' — ' + d.zone.split(',')[0];
   clearBtn.classList.add('on');
   sugBox.classList.remove('on');
-  pillCap.textContent = d.cap;
-  pillZone.textContent = d.zone.split(',').slice(0, 2).join(', ');
+  pillCap.textContent  = d.cap;
+  pillZone.textContent = d.zone.split(',').slice(0,2).join(', ');
   infoPill.classList.add('on');
-  // Zoom & pan to it
   zoomToCAP(d);
   startAnimate();
 }
 
 function zoomToCAP(d) {
-  const { ix, iy, iw, ih } = getImgRect();
-  const targetScale = 3.2;
-  scale = targetScale;
-  // Center the CAP
-  const capX = ix + (d.x / 100) * iw * scale;
-  const capY = iy + (d.y / 100) * ih * scale;
-  offsetX = container.clientWidth  / 2 - capX;
-  offsetY = container.clientHeight / 2 - capY;
-  clampOffset();
-  applyTransform();
+  // Porta il CAP al centro dello schermo con zoom 3.5x
+  const targetScale = Math.min(8, Math.max(fitScaleRef * 3.5, 2));
+  camScale = targetScale;
+  const capScreenX = (d.x / 100) * IMG_W * camScale;
+  const capScreenY = (d.y / 100) * IMG_H * camScale;
+  camX = canvas.width  / 2 - capScreenX;
+  camY = canvas.height / 2 - capScreenY;
+  clampCam();
+  document.getElementById('resetBtn').classList.add('on');
 }
 
 searchInput.addEventListener('input', e => {
   const q = e.target.value.trim();
   clearBtn.classList.toggle('on', q.length > 0);
-  if (q.length < 2) {
-    sugBox.classList.remove('on');
-    return;
-  }
-  renderSuggestions(getSuggestions(q));
+  renderSuggestions(q.length >= 2 ? getSuggestions(q) : []);
 });
 
 searchInput.addEventListener('keydown', e => {
   const items = sugBox.querySelectorAll('.sug-item');
   if (e.key === 'ArrowDown') {
-    sugActive = Math.min(sugActive + 1, items.length - 1);
-    items.forEach((el, i) => el.classList.toggle('active', i === sugActive));
+    sugActive = Math.min(sugActive+1, items.length-1);
+    items.forEach((el,i) => el.classList.toggle('active', i===sugActive));
     e.preventDefault();
   } else if (e.key === 'ArrowUp') {
-    sugActive = Math.max(sugActive - 1, 0);
-    items.forEach((el, i) => el.classList.toggle('active', i === sugActive));
+    sugActive = Math.max(sugActive-1, 0);
+    items.forEach((el,i) => el.classList.toggle('active', i===sugActive));
     e.preventDefault();
   } else if (e.key === 'Enter') {
-    if (sugActive >= 0) {
-      const q = searchInput.value.toLowerCase();
-      const list = getSuggestions(q);
-      if (list[sugActive]) selectCap(list[sugActive]);
-    } else {
-      const q = searchInput.value.trim().toLowerCase();
-      const list = getSuggestions(q);
-      if (list[0]) selectCap(list[0]);
-    }
+    const q = searchInput.value.trim().toLowerCase();
+    const list = getSuggestions(q);
+    const pick = sugActive >= 0 ? list[sugActive] : list[0];
+    if (pick) selectCap(pick);
   } else if (e.key === 'Escape') {
-    sugBox.classList.remove('on');
-    searchInput.blur();
+    sugBox.classList.remove('on'); searchInput.blur();
   }
 });
 
@@ -702,24 +655,27 @@ clearBtn.addEventListener('click', () => {
   infoPill.classList.remove('on');
   highlighted = null;
   stopAnimate();
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // reset zoom
-  scale = 1; offsetX = 0; offsetY = 0;
-  applyTransform();
+  fitMap(); redraw();
+  document.getElementById('resetBtn').classList.remove('on');
   searchInput.focus();
 });
 
-// ─────────────────────────────────────────────
-// INIT
-// ─────────────────────────────────────────────
-window.addEventListener('resize', () => { resizeCanvas(); applyTransform(); });
-img.addEventListener('load', () => { resizeCanvas(); });
-resizeCanvas();
+// ── Init ────────────────────────────────────────────────────
+function init() {
+  canvas.width  = container.clientWidth;
+  canvas.height = container.clientHeight;
+  fitMap();
+  fitScaleRef = camScale;
+  if (mapImage.complete) redraw();
+}
 
-// Hide hint after 4s
+window.addEventListener('resize', init);
+init();
+
 setTimeout(() => {
-  document.getElementById('mapHint').style.opacity = '0';
-  document.getElementById('mapHint').style.transition = 'opacity 1s';
+  const h = document.getElementById('mapHint');
+  h.style.transition = 'opacity 1s';
+  h.style.opacity = '0';
 }, 4000);
 </script>
 </body>
