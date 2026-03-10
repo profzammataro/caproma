@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mappa CAP di Roma</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --gold: #C8902A;
+    --gold-lt: #E8B84B;
+    --red: #9B2335;
+    --bg: #111009;
+    --bg2: #1C1A14;
+    --border: rgba(200,144,42,0.22);
+    --text: #F0EAD6;
+    --dim: #7A7060;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── TOP BAR ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    padding: 0.7rem 1.2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+    z-index: 20;
+  }
+
+  .logo {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.25rem;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+  .logo span { color: var(--gold); }
+
+  .search-wrap {
+    position: relative;
+    flex: 1;
+    max-width: 480px;
+  }
+
+  #searchInput {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.55rem 2.4rem 0.55rem 2.5rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.9rem;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  #searchInput:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(200,144,42,0.13);
+  }
+  #searchInput::placeholder { color: var(--dim); }
+
+  .s-icon {
+    position: absolute; left: 0.7rem; top: 50%;
+    transform: translateY(-50%);
+    color: var(--gold); font-size: 1rem; pointer-events: none;
+  }
+  #clearBtn {
+    position: absolute; right: 0.6rem; top: 50%;
+    transform: translateY(-50%);
+    background: none; border: none; color: var(--dim);
+    cursor: pointer; font-size: 1rem; display: none; line-height:1;
+  }
+  #clearBtn.on { display: block; }
+
+  /* Dropdown suggestions */
+  #suggestions {
+    position: absolute;
+    top: calc(100% + 4px); left: 0; right: 0;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 100;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  #suggestions.on { display: block; }
+  .sug-item {
+    padding: 0.5rem 0.8rem;
+    cursor: pointer;
+    display: flex; gap: 0.8rem; align-items: center;
+    border-bottom: 1px solid rgba(200,144,42,0.08);
+    transition: background 0.12s;
+  }
+  .sug-item:last-child { border-bottom: none; }
+  .sug-item:hover, .sug-item.active { background: rgba(200,144,42,0.1); }
+  .sug-cap {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.82rem;
+    color: var(--gold-lt);
+    min-width: 52px;
+  }
+  .sug-zone {
+    font-size: 0.78rem;
+    color: var(--dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Info pill */
+  #infoPill {
+    display: none;
+    align-items: center;
+    gap: 0.6rem;
+    background: rgba(200,144,42,0.15);
+    border: 1px solid rgba(200,144,42,0.4);
+    border-radius: 20px;
+    padding: 0.3rem 0.9rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  #infoPill.on { display: flex; }
+  #infoPill strong { color: var(--gold-lt); font-size: 1rem; }
+
+  .count-badge {
+    margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--dim);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* ── MAP AREA ── */
+  .map-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #0a0908;
+    cursor: grab;
+  }
+  .map-container.dragging { cursor: grabbing; }
+
+  #mapImg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    object-position: center;
+    user-select: none;
+    -webkit-user-drag: none;
+    transform-origin: 0 0;
+  }
+
+  #mapCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+    width: 100%; height: 100%;
+  }
+
+  /* Zoom controls */
+  .zoom-ctrl {
+    position: absolute;
+    bottom: 1.2rem; right: 1.2rem;
+    display: flex; flex-direction: column; gap: 4px;
+    z-index: 10;
+  }
+  .zoom-btn {
+    width: 36px; height: 36px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--gold);
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s;
+  }
+  .zoom-btn:hover { background: rgba(200,144,42,0.15); }
+
+  /* Reset btn */
+  #resetBtn {
+    position: absolute;
+    bottom: 1.2rem; left: 1.2rem;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    padding: 0.4rem 0.8rem;
+    cursor: pointer;
+    z-index: 10;
+    transition: all 0.15s;
+    display: none;
+  }
+  #resetBtn.on { display: block; }
+  #resetBtn:hover { color: var(--text); border-color: var(--gold); }
+
+  /* Mobile hint */
+  .hint {
+    position: absolute;
+    bottom: 1.2rem; left: 50%; transform: translateX(-50%);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem;
+    color: var(--dim);
+    letter-spacing: 0.08em;
+    pointer-events: none;
+    z-index: 5;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 600px) {
+    header { flex-wrap: wrap; gap: 0.6rem; padding: 0.6rem; }
+    .logo { font-size: 1rem; }
+    .count-badge { display: none; }
+    #infoPill { font-size: 0.72rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">CAP <span>Roma</span></div>
+
+  <div class="search-wrap">
+    <span class="s-icon">⌕</span>
+    <input id="searchInput" type="text" autocomplete="off" spellcheck="false"
+      placeholder="Cerca CAP o quartiere…">
+    <button id="clearBtn">✕</button>
+    <div id="suggestions"></div>
+  </div>
+
+  <div id="infoPill">
+    <strong id="pillCap"></strong>
+    <span id="pillZone"></span>
+  </div>
+
+  <div class="count-badge" id="countBadge">84 CAP · 15 Municipi</div>
+</header>
+
+<div class="map-container" id="mapContainer">
+  <img id="mapImg"
+    src="mappa_cap_roma.jpg"
+    alt="Mappa CAP Roma"
+    draggable="false">
+  <canvas id="mapCanvas"></canvas>
+
+  <div class="zoom-ctrl">
+    <button class="zoom-btn" id="zoomIn">+</button>
+    <button class="zoom-btn" id="zoomOut">−</button>
+  </div>
+
+  <button id="resetBtn">↺ Reset</button>
+  <div class="hint" id="mapHint">Scorri o pizzica per zoomare · Trascina per spostarti</div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// CAP DATA  (x%, y% as % of full image 8268×5907)
+// ─────────────────────────────────────────────
+const CAPS = [
+  { cap:"00189", zone:"Prima Porta",                           x:46.2, y:33.0 },
+  { cap:"00188", zone:"Labaro",                                x:46.8, y:36.5 },
+  { cap:"00061", zone:"Polline Martignano",                    x:33.5, y:24.8 },
+  { cap:"00063", zone:"Cesano, Polline Martignano",            x:31.0, y:28.5 },
+  { cap:"00060", zone:"Cesano, Santa Maria di Galeria",        x:35.5, y:27.5 },
+  { cap:"00123", zone:"Casalotti, La Giustiniana, La Storta",  x:35.2, y:41.5 },
+  { cap:"00135", zone:"Della Vittoria, Primavalle, Trionfale", x:39.5, y:44.5 },
+  { cap:"00136", zone:"Della Vittoria, Primavalle, Trionfale", x:38.0, y:46.0 },
+  { cap:"00167", zone:"Primavalle",                            x:37.2, y:47.8 },
+  { cap:"00168", zone:"Primavalle",                            x:36.0, y:49.5 },
+  { cap:"00166", zone:"Aurelio, Casalotti",                    x:35.5, y:52.0 },
+  { cap:"00165", zone:"Aurelio",                               x:40.0, y:51.5 },
+  { cap:"00163", zone:"Gianicolense",                          x:41.5, y:54.0 },
+  { cap:"00164", zone:"Gianicolense",                          x:40.0, y:55.5 },
+  { cap:"00152", zone:"Aurelio, Gianicolense",                 x:41.5, y:52.8 },
+  { cap:"00120", zone:"Borgo (Vaticano)",                      x:43.2, y:51.2 },
+  { cap:"00193", zone:"Borgo, Prati",                          x:43.8, y:52.0 },
+  { cap:"00192", zone:"Prati, Trionfale",                      x:44.5, y:50.2 },
+  { cap:"00186", zone:"Campo Marzio, Parione, Campitelli",     x:46.2, y:51.5 },
+  { cap:"00153", zone:"Trastevere, Testaccio",                 x:46.0, y:54.0 },
+  { cap:"00187", zone:"Trevi, Colonna, Ludovisi",              x:48.5, y:50.0 },
+  { cap:"00184", zone:"Monti, Castro Pretorio",                x:49.8, y:52.5 },
+  { cap:"00185", zone:"Esquilino, Tiburtino",                  x:51.5, y:51.8 },
+  { cap:"00191", zone:"Tor di Quinto",                         x:46.5, y:44.2 },
+  { cap:"00196", zone:"Flaminio, Parioli",                     x:47.5, y:47.0 },
+  { cap:"00197", zone:"Pinciano",                              x:49.5, y:47.0 },
+  { cap:"00194", zone:"Della Vittoria",                        x:43.5, y:47.5 },
+  { cap:"00195", zone:"Della Vittoria",                        x:42.5, y:48.8 },
+  { cap:"00161", zone:"Nomentano",                             x:52.0, y:47.5 },
+  { cap:"00162", zone:"Nomentano",                             x:53.5, y:46.5 },
+  { cap:"00198", zone:"Salario, Trieste",                      x:53.5, y:45.2 },
+  { cap:"00199", zone:"Trieste",                               x:55.5, y:45.8 },
+  { cap:"00141", zone:"Monte Sacro, Val Melaina",              x:55.0, y:43.5 },
+  { cap:"00139", zone:"Monte Sacro, Castel Giubileo",          x:56.5, y:40.2 },
+  { cap:"00138", zone:"Castel Giubileo, Marcigliana",          x:55.5, y:37.5 },
+  { cap:"00156", zone:"Monte Sacro, San Basilio",              x:57.0, y:45.5 },
+  { cap:"00137", zone:"San Basilio, Settecamini",              x:59.5, y:43.0 },
+  { cap:"00131", zone:"Lunghezza, Settecamini",                x:63.0, y:42.5 },
+  { cap:"00013", zone:"Tor San Giovanni",                      x:65.5, y:39.0 },
+  { cap:"00157", zone:"Pietralata",                            x:54.2, y:49.5 },
+  { cap:"00158", zone:"Pietralata",                            x:55.5, y:50.5 },
+  { cap:"00159", zone:"Tiburtino, Collatino",                  x:53.0, y:51.0 },
+  { cap:"00155", zone:"Collatino, Alessandrino, Tor Sapienza", x:59.5, y:50.8 },
+  { cap:"00177", zone:"Prenestino-Labicano, Collatino",        x:57.5, y:52.0 },
+  { cap:"00176", zone:"Prenestino-Labicano, Tuscolano",        x:56.5, y:53.5 },
+  { cap:"00171", zone:"Prenestino-Labicano, Centocelle",       x:57.8, y:54.0 },
+  { cap:"00172", zone:"Prenestino-Centocelle, Alessandrino",   x:59.0, y:55.2 },
+  { cap:"00132", zone:"Torre Angela, Torre Gaia",              x:65.5, y:48.0 },
+  { cap:"00133", zone:"Torre Angela, Torrenova",               x:63.5, y:51.0 },
+  { cap:"00010", zone:"Lunghezza, Torre Angela, S. Vittorino", x:67.5, y:52.5 },
+  { cap:"00169", zone:"Torre Spaccata",                        x:60.5, y:56.0 },
+  { cap:"00173", zone:"Don Bosco, Torre Maura, Capannelle",    x:61.5, y:58.0 },
+  { cap:"00175", zone:"Don Bosco",                             x:58.5, y:59.5 },
+  { cap:"00174", zone:"Tuscolano, Don Bosco, Appio-Claudio",   x:56.5, y:58.5 },
+  { cap:"00182", zone:"Tuscolano",                             x:57.5, y:61.5 },
+  { cap:"00154", zone:"Ostiense",                              x:47.5, y:55.5 },
+  { cap:"00145", zone:"Ostiense",                              x:48.0, y:57.0 },
+  { cap:"00147", zone:"Ardeatino, Ostiense",                   x:49.0, y:58.0 },
+  { cap:"00142", zone:"Ardeatino, EUR, Ostiense",              x:48.5, y:59.5 },
+  { cap:"00146", zone:"Ostiense, Portuense, San Saba",         x:46.5, y:57.0 },
+  { cap:"00143", zone:"Ardeatino, Cecchignola, EUR, Torrino",  x:50.5, y:62.5 },
+  { cap:"00144", zone:"EUR, Fonte Ostiense, Torrino",          x:46.5, y:62.5 },
+  { cap:"00128", zone:"Castel di Decima, Torrino, Valleranno", x:51.5, y:66.5 },
+  { cap:"00134", zone:"Castel di Leva, Torricola",             x:53.0, y:68.5 },
+  { cap:"00183", zone:"Appio-Latino",                          x:51.0, y:61.5 },
+  { cap:"00178", zone:"Appio-Claudio, Fonte Ostiense",         x:53.8, y:59.5 },
+  { cap:"00179", zone:"Tuscolano, Appio-Latino",               x:52.5, y:61.0 },
+  { cap:"00181", zone:"Tuscolano",                             x:55.0, y:62.0 },
+  { cap:"00129", zone:"Castel Porziano",                       x:56.5, y:71.5 },
+  { cap:"00040", zone:"Casal Morena, Castel di Decima, Ciampino", x:63.0, y:67.0 },
+  { cap:"00043", zone:"Aeroporto di Ciampino",                 x:62.0, y:70.0 },
+  { cap:"00119", zone:"Acilia Nord, Casal Palocco, Ostia Antica", x:29.5, y:66.5 },
+  { cap:"00121", zone:"Lido di Ostia Ponente",                 x:24.5, y:71.5 },
+  { cap:"00122", zone:"Acilia Sud, Lido di Ostia Levante",     x:28.5, y:73.5 },
+  { cap:"00125", zone:"Acilia Nord, Acilia Sud, Casal Palocco",x:27.5, y:69.0 },
+  { cap:"00126", zone:"Acilia Nord, Ostia Antica",             x:26.0, y:67.5 },
+  { cap:"00124", zone:"Casal Palocco, Castel Fusano",          x:32.5, y:76.0 },
+  { cap:"00148", zone:"EUR, Gianicolense, Magliana, Portuense",x:42.5, y:62.5 },
+  { cap:"00149", zone:"Gianicolense, Portuense",               x:41.5, y:60.5 },
+  { cap:"00151", zone:"Gianicolense",                          x:39.8, y:61.5 },
+  { cap:"00127", zone:"Mezzocammino",                          x:44.5, y:64.5 },
+  { cap:"00057", zone:"Castel di Guido, Maccarese, Torrimpietra", x:22.0, y:51.5 },
+  { cap:"00050", zone:"Maccarese, Ponte Galeria, Torrimpietra",x:25.5, y:57.0 },
+  { cap:"00054", zone:"Fiumicino, Fregene, Isola Sacra, Palidoro", x:17.5, y:58.5 },
+];
+
+// ─────────────────────────────────────────────
+// IMAGE + CANVAS SETUP
+// ─────────────────────────────────────────────
+const container = document.getElementById('mapContainer');
+const img       = document.getElementById('mapImg');
+const canvas    = document.getElementById('mapCanvas');
+const ctx       = canvas.getContext('2d');
+
+const IMG_W = 8268, IMG_H = 5907; // native image size
+
+let scale = 1, offsetX = 0, offsetY = 0;
+let isDragging = false, dragStartX, dragStartY, dragOffX, dragOffY;
+let highlighted = null;
+let animFrame = null;
+let pulseT = 0;
+
+function getImgRect() {
+  // object-fit: contain inside container
+  const cw = container.clientWidth, ch = container.clientHeight;
+  const ratio = Math.min(cw / IMG_W, ch / IMG_H);
+  const iw = IMG_W * ratio, ih = IMG_H * ratio;
+  const ix = (cw - iw) / 2, iy = (ch - ih) / 2;
+  return { ix, iy, iw, ih, ratio };
+}
+
+function resizeCanvas() {
+  canvas.width  = container.clientWidth;
+  canvas.height = container.clientHeight;
+  drawHighlight();
+}
+
+function pctToCanvas(xPct, yPct) {
+  const { ix, iy, iw, ih } = getImgRect();
+  return {
+    x: ix + (xPct / 100) * iw * scale + offsetX,
+    y: iy + (yPct / 100) * ih * scale + offsetY
+  };
+}
+
+function drawHighlight() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!highlighted) return;
+
+  const { ix, iy, iw, ih } = getImgRect();
+  const cx = ix + (highlighted.x / 100) * iw * scale + offsetX;
+  const cy = iy + (highlighted.y / 100) * ih * scale + offsetY;
+
+  const baseR = Math.max(28, 36 * scale);
+  const pulse = Math.sin(pulseT * 0.06) * 0.3 + 0.7;
+
+  // Outer glow rings
+  for (let i = 3; i >= 1; i--) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, baseR * (1 + i * 0.45) * pulse, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(200,144,42,${0.15 / i})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Filled circle
+  ctx.beginPath();
+  ctx.arc(cx, cy, baseR, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(200,144,42,0.28)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(232,184,75,0.9)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Cross-hair lines
+  const arm = baseR * 1.8;
+  ctx.strokeStyle = 'rgba(232,184,75,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(cx - arm, cy); ctx.lineTo(cx - baseR - 4, cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + arm, cy); ctx.lineTo(cx + baseR + 4, cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy - arm); ctx.lineTo(cx, cy - baseR - 4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy + arm); ctx.lineTo(cx, cy + baseR + 4); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Label bubble
+  const lbl = highlighted.cap;
+  ctx.font = `bold ${Math.max(13, 15 * scale)}px 'IBM Plex Mono', monospace`;
+  const tw = ctx.measureText(lbl).width;
+  const pad = 8, th = Math.max(13, 15 * scale) + 4;
+  const bx = cx - tw / 2 - pad;
+  const by = cy - baseR - th - pad * 2 - 6;
+
+  // bubble bg
+  ctx.beginPath();
+  const br = 6;
+  ctx.moveTo(bx + br, by);
+  ctx.lineTo(bx + tw + pad * 2 - br, by);
+  ctx.quadraticCurveTo(bx + tw + pad * 2, by, bx + tw + pad * 2, by + br);
+  ctx.lineTo(bx + tw + pad * 2, by + th + pad);
+  ctx.quadraticCurveTo(bx + tw + pad * 2, by + th + pad + br, bx + tw + pad * 2 - br, by + th + pad + br);
+  // arrow
+  const mx = bx + tw / 2 + pad;
+  ctx.lineTo(mx + 6, by + th + pad + br);
+  ctx.lineTo(mx, cy - baseR - 2);
+  ctx.lineTo(mx - 6, by + th + pad + br);
+  ctx.lineTo(bx + br, by + th + pad + br);
+  ctx.quadraticCurveTo(bx, by + th + pad + br, bx, by + th + pad);
+  ctx.lineTo(bx, by + br);
+  ctx.quadraticCurveTo(bx, by, bx + br, by);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(10,30,60,0.92)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(200,144,42,0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = '#E8B84B';
+  ctx.fillText(lbl, cx - tw / 2, by + th + 2);
+}
+
+function animate() {
+  pulseT++;
+  drawHighlight();
+  animFrame = requestAnimationFrame(animate);
+}
+
+function startAnimate() {
+  if (animFrame) cancelAnimationFrame(animFrame);
+  animate();
+}
+function stopAnimate() {
+  if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+}
+
+// ─────────────────────────────────────────────
+// ZOOM & PAN
+// ─────────────────────────────────────────────
+function clampOffset() {
+  const { ix, iy, iw, ih } = getImgRect();
+  // Allow pan only within reasonable bounds
+  const maxX = iw * (scale - 1) / 2 + iw * 0.1;
+  const maxY = ih * (scale - 1) / 2 + ih * 0.1;
+  offsetX = Math.max(-maxX, Math.min(maxX, offsetX));
+  offsetY = Math.max(-maxY, Math.min(maxY, offsetY));
+}
+
+function applyZoom(delta, cx, cy) {
+  const oldScale = scale;
+  scale = Math.max(1, Math.min(6, scale * (1 + delta)));
+  // zoom toward point
+  const { ix, iy, iw, ih } = getImgRect();
+  const ratio = scale / oldScale;
+  offsetX = cx - (cx - offsetX) * ratio;
+  offsetY = cy - (cy - offsetY) * ratio;
+  // Re-get rect after scale change for clamping
+  clampOffset();
+  applyTransform();
+}
+
+function applyTransform() {
+  const { ix, iy } = getImgRect();
+  img.style.transformOrigin = '0 0';
+  img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+  drawHighlight();
+  document.getElementById('resetBtn').classList.toggle('on', scale > 1.05 || Math.abs(offsetX) > 5 || Math.abs(offsetY) > 5);
+}
+
+// Mouse wheel zoom
+container.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = container.getBoundingClientRect();
+  applyZoom(-e.deltaY * 0.001, e.clientX - rect.left, e.clientY - rect.top);
+}, { passive: false });
+
+// Mouse drag
+container.addEventListener('mousedown', e => {
+  if (scale <= 1) return;
+  isDragging = true;
+  dragStartX = e.clientX; dragStartY = e.clientY;
+  dragOffX = offsetX; dragOffY = offsetY;
+  container.classList.add('dragging');
+});
+window.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  offsetX = dragOffX + (e.clientX - dragStartX);
+  offsetY = dragOffY + (e.clientY - dragStartY);
+  clampOffset();
+  applyTransform();
+});
+window.addEventListener('mouseup', () => {
+  isDragging = false;
+  container.classList.remove('dragging');
+});
+
+// Touch pinch/pan
+let lastTouches = null;
+container.addEventListener('touchstart', e => {
+  lastTouches = e.touches;
+}, { passive: true });
+
+container.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const rect = container.getBoundingClientRect();
+  if (e.touches.length === 2 && lastTouches?.length === 2) {
+    const d0 = Math.hypot(lastTouches[0].clientX - lastTouches[1].clientX,
+                          lastTouches[0].clientY - lastTouches[1].clientY);
+    const d1 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                          e.touches[0].clientY - e.touches[1].clientY);
+    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+    const my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+    applyZoom((d1 - d0) / d0 * 0.5, mx, my);
+  } else if (e.touches.length === 1 && lastTouches?.length === 1 && scale > 1) {
+    offsetX += e.touches[0].clientX - lastTouches[0].clientX;
+    offsetY += e.touches[0].clientY - lastTouches[0].clientY;
+    clampOffset();
+    applyTransform();
+  }
+  lastTouches = e.touches;
+}, { passive: false });
+
+// Zoom buttons
+document.getElementById('zoomIn').addEventListener('click', () => {
+  applyZoom(0.3, container.clientWidth/2, container.clientHeight/2);
+});
+document.getElementById('zoomOut').addEventListener('click', () => {
+  applyZoom(-0.3, container.clientWidth/2, container.clientHeight/2);
+});
+
+// Reset
+document.getElementById('resetBtn').addEventListener('click', () => {
+  scale = 1; offsetX = 0; offsetY = 0;
+  applyTransform();
+});
+
+// ─────────────────────────────────────────────
+// SEARCH
+// ─────────────────────────────────────────────
+const searchInput  = document.getElementById('searchInput');
+const clearBtn     = document.getElementById('clearBtn');
+const sugBox       = document.getElementById('suggestions');
+const infoPill     = document.getElementById('infoPill');
+const pillCap      = document.getElementById('pillCap');
+const pillZone     = document.getElementById('pillZone');
+
+let sugActive = -1;
+
+function getSuggestions(q) {
+  if (!q || q.length < 2) return [];
+  q = q.toLowerCase();
+  return CAPS.filter(d =>
+    d.cap.startsWith(q) || d.zone.toLowerCase().includes(q)
+  ).slice(0, 8);
+}
+
+function renderSuggestions(list) {
+  sugBox.innerHTML = '';
+  sugActive = -1;
+  if (!list.length) { sugBox.classList.remove('on'); return; }
+  list.forEach((d, i) => {
+    const el = document.createElement('div');
+    el.className = 'sug-item';
+    el.innerHTML = `<span class="sug-cap">${d.cap}</span><span class="sug-zone">${d.zone}</span>`;
+    el.addEventListener('mousedown', e => { e.preventDefault(); selectCap(d); });
+    sugBox.appendChild(el);
+  });
+  sugBox.classList.add('on');
+}
+
+function selectCap(d) {
+  highlighted = d;
+  searchInput.value = d.cap + ' — ' + d.zone.split(',')[0];
+  clearBtn.classList.add('on');
+  sugBox.classList.remove('on');
+  pillCap.textContent = d.cap;
+  pillZone.textContent = d.zone.split(',').slice(0, 2).join(', ');
+  infoPill.classList.add('on');
+  // Zoom & pan to it
+  zoomToCAP(d);
+  startAnimate();
+}
+
+function zoomToCAP(d) {
+  const { ix, iy, iw, ih } = getImgRect();
+  const targetScale = 3.2;
+  scale = targetScale;
+  // Center the CAP
+  const capX = ix + (d.x / 100) * iw * scale;
+  const capY = iy + (d.y / 100) * ih * scale;
+  offsetX = container.clientWidth  / 2 - capX;
+  offsetY = container.clientHeight / 2 - capY;
+  clampOffset();
+  applyTransform();
+}
+
+searchInput.addEventListener('input', e => {
+  const q = e.target.value.trim();
+  clearBtn.classList.toggle('on', q.length > 0);
+  if (q.length < 2) {
+    sugBox.classList.remove('on');
+    return;
+  }
+  renderSuggestions(getSuggestions(q));
+});
+
+searchInput.addEventListener('keydown', e => {
+  const items = sugBox.querySelectorAll('.sug-item');
+  if (e.key === 'ArrowDown') {
+    sugActive = Math.min(sugActive + 1, items.length - 1);
+    items.forEach((el, i) => el.classList.toggle('active', i === sugActive));
+    e.preventDefault();
+  } else if (e.key === 'ArrowUp') {
+    sugActive = Math.max(sugActive - 1, 0);
+    items.forEach((el, i) => el.classList.toggle('active', i === sugActive));
+    e.preventDefault();
+  } else if (e.key === 'Enter') {
+    if (sugActive >= 0) {
+      const q = searchInput.value.toLowerCase();
+      const list = getSuggestions(q);
+      if (list[sugActive]) selectCap(list[sugActive]);
+    } else {
+      const q = searchInput.value.trim().toLowerCase();
+      const list = getSuggestions(q);
+      if (list[0]) selectCap(list[0]);
+    }
+  } else if (e.key === 'Escape') {
+    sugBox.classList.remove('on');
+    searchInput.blur();
+  }
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-wrap')) sugBox.classList.remove('on');
+});
+
+clearBtn.addEventListener('click', () => {
+  searchInput.value = '';
+  clearBtn.classList.remove('on');
+  sugBox.classList.remove('on');
+  infoPill.classList.remove('on');
+  highlighted = null;
+  stopAnimate();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // reset zoom
+  scale = 1; offsetX = 0; offsetY = 0;
+  applyTransform();
+  searchInput.focus();
+});
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+window.addEventListener('resize', () => { resizeCanvas(); applyTransform(); });
+img.addEventListener('load', () => { resizeCanvas(); });
+resizeCanvas();
+
+// Hide hint after 4s
+setTimeout(() => {
+  document.getElementById('mapHint').style.opacity = '0';
+  document.getElementById('mapHint').style.transition = 'opacity 1s';
+}, 4000);
+</script>
+</body>
+</html>
